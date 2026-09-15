@@ -2,13 +2,17 @@
 
 import logging
 
+import ops
 from ops.framework import EventBase, EventSource, Object, ObjectEvents
 
 LIBID = "e6f580481c1b4388aa4d2cdf412a47fa"
 LIBAPI = 0
-LIBPATCH = 8
+LIBPATCH = 9
 
 DEFAULT_RELATION_NAME = "grafana-cloud-config"
+
+# Charm-local label for the secret the provider grants us.
+CREDENTIALS_SECRET_LABEL = "grafana-cloud-config-credentials"
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +62,20 @@ class GrafanaCloudConfigRequirer(Object):
         for event in self._broken_events:
             self.framework.observe(event, self._on_relation_broken)
 
+        self.framework.observe(self._charm.on.secret_changed, self._on_secret_changed)
+
     def _on_relation_changed(self, event):
         self.on.cloud_config_available.emit()  # pyright: ignore
 
     def _on_relation_broken(self, event):
         self.on.cloud_config_revoked.emit()  # pyright: ignore
+
+    def _on_secret_changed(self, event: ops.SecretChangedEvent):
+        if event.secret.label != CREDENTIALS_SECRET_LABEL:
+            return
+        # Start tracking the new revision, then let the charm reconfigure.
+        event.secret.get_content(refresh=True)
+        self.on.cloud_config_available.emit()  # pyright: ignore
 
     def _is_not_empty(self, s):
         return bool(s and not s.isspace())
@@ -86,8 +99,29 @@ class GrafanaCloudConfigRequirer(Object):
     @property
     def credentials(self):
         """Return the credentials, if any; otherwise, return None."""
+        if secret_id := self._data.get("secret-id", "").strip():
+            return self._credentials_from_secret(secret_id)
+        # Providers older than LIBPATCH 6 of cloud_config_provider put the
+        # credentials in the databag in plain text.
         if (username := self._data.get("username", "").strip()) and (
             password := self._data.get("password", "").strip()
+        ):
+            return Credentials(username, password)
+        return None
+
+    def _credentials_from_secret(self, secret_id):
+        try:
+            secret = self._charm.model.get_secret(id=secret_id, label=CREDENTIALS_SECRET_LABEL)
+            content = secret.get_content()
+        except (ops.SecretNotFoundError, ops.ModelError):
+            logger.warning(
+                "Cannot read the credentials secret %s shared over %s.",
+                secret_id,
+                self._relation_name,
+            )
+            return None
+        if (username := content.get("username", "").strip()) and (
+            password := content.get("password", "").strip()
         ):
             return Credentials(username, password)
         return None
@@ -105,10 +139,12 @@ class GrafanaCloudConfigRequirer(Object):
 
         endpoint = {}
         endpoint["url"] = self.loki_url
-        if self.credentials:
+        # Read the credentials once: with a secret they cost a Juju call each time.
+        credentials = self.credentials
+        if credentials:
             endpoint["basic_auth"] = {
-                "username": self.credentials.username,
-                "password": self.credentials.password,
+                "username": credentials.username,
+                "password": credentials.password,
             }
         return endpoint
 
@@ -135,10 +171,12 @@ class GrafanaCloudConfigRequirer(Object):
 
         endpoint = {}
         endpoint["url"] = self.prometheus_url
-        if self.credentials:
+        # Read the credentials once: with a secret they cost a Juju call each time.
+        credentials = self.credentials
+        if credentials:
             endpoint["basic_auth"] = {
-                "username": self.credentials.username,
-                "password": self.credentials.password,
+                "username": credentials.username,
+                "password": credentials.password,
             }
         return endpoint
 

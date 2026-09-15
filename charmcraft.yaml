@@ -65,16 +65,38 @@ config:
         Grafana Cloud.
       value: ""
       type: string
+    credentials:
+      description: |
+        A Juju user secret holding the `username` and `password` used to
+        authenticate to the cloud services provided by Grafana Cloud. For
+        example:
+
+            juju add-secret gc-creds username=<username> password=<api-key>
+            juju grant-secret gc-creds grafana-cloud-integrator
+            juju config grafana-cloud-integrator credentials=secret:<id>
+
+        Grant the secret before setting this option: `juju grant-secret` does
+        not notify the charm, so the charm cannot retry on its own.
+
+        Takes precedence over the deprecated `username` and `password`
+        options.
+      type: secret
     username:
       description: >
         The username used to authenticate to the cloud services provided by
         Grafana Cloud.
+
+        Deprecated: this stores the username in plain text. Use `credentials`
+        instead.
       value: ""
       type: string
     password:
       description: >
         The password (API Key/Token) used to authenticate to the cloud
         services provided by Grafana Cloud.
+
+        Deprecated: this stores the API key in plain text where anyone with
+        model read access can see it. Use `credentials` instead.
       value: ""
       type: string
     tls-ca:
