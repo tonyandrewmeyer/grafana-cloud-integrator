@@ -1,14 +1,22 @@
-"""Grafana Cloud Integrator Configuration Requirer."""
+"""Grafana Cloud Integrator Configuration Requirer.
+
+From LIBPATCH 6 the provider shares the credentials as a Juju secret and puts
+only its `secret-id` in the databag. This requirer reads the secret when there
+is a `secret-id`, and falls back to the plain-text `username` and `password`
+keys that older providers write.
+"""
 
 import logging
 
+import ops
 from ops.framework import EventBase, EventSource, Object, ObjectEvents
 
 LIBID = "e6f580481c1b4388aa4d2cdf412a47fa"
 LIBAPI = 0
-LIBPATCH = 8
+LIBPATCH = 9
 
 DEFAULT_RELATION_NAME = "grafana-cloud-config"
+SECRET_LABEL = "grafana-cloud-config-credentials"
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +66,14 @@ class GrafanaCloudConfigRequirer(Object):
         for event in self._broken_events:
             self.framework.observe(event, self._on_relation_broken)
 
+        self.framework.observe(self._charm.on.secret_changed, self._on_secret_changed)
+
     def _on_relation_changed(self, event):
         self.on.cloud_config_available.emit()  # pyright: ignore
+
+    def _on_secret_changed(self, event: ops.SecretChangedEvent):
+        if event.secret.label == SECRET_LABEL:
+            self.on.cloud_config_available.emit()  # pyright: ignore
 
     def _on_relation_broken(self, event):
         self.on.cloud_config_revoked.emit()  # pyright: ignore
@@ -86,8 +100,17 @@ class GrafanaCloudConfigRequirer(Object):
     @property
     def credentials(self):
         """Return the credentials, if any; otherwise, return None."""
-        if (username := self._data.get("username", "").strip()) and (
-            password := self._data.get("password", "").strip()
+        data = self._data
+        if secret_id := data.get("secret-id"):
+            try:
+                secret = self._charm.model.get_secret(id=secret_id, label=SECRET_LABEL)
+                data = secret.get_content(refresh=True)
+            except ops.ModelError:
+                # The provider removed the secret when the credentials were
+                # cleared, or hasn't granted it to this application.
+                return None
+        if (username := data.get("username", "").strip()) and (
+            password := data.get("password", "").strip()
         ):
             return Credentials(username, password)
         return None
