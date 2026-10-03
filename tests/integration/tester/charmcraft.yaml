@@ -1,0 +1,25 @@
+# A requirer for the integration tests, using this repository's requirer library.
+name: grafana-cloud-config-tester
+type: charm
+summary: Requires grafana-cloud-config, for the integration tests.
+description: |
+  Reports the username it receives over grafana-cloud-config in its status, and
+  returns the credentials from the get-credentials action.
+
+base: ubuntu@24.04
+platforms:
+  amd64:
+
+parts:
+  charm:
+    plugin: charm
+    source: .
+
+requires:
+  grafana-cloud-config:
+    interface: grafana_cloud_config
+    limit: 1
+
+actions:
+  get-credentials:
+    description: Return the credentials the charm has received.

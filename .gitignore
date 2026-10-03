@@ -8,3 +8,5 @@ __pycache__/
 .idea
 .vscode/
 .vim
+# Copied in by the integration tests before the tester charm is packed.
+tests/integration/tester/lib/
