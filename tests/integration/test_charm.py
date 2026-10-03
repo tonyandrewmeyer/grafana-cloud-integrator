@@ -2,7 +2,7 @@
 # Copyright 2022 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-import hashlib
+import asyncio
 import json
 import logging
 import os
@@ -57,15 +57,19 @@ async def test_build_and_deploy(ops_test: OpsTest):
     )
 
 
-def expected_status(username: str, password: str) -> str:
-    """The tester's status message for the credentials it should have."""
-    return f"{username} {hashlib.sha256(password.encode()).hexdigest()[:8]}"
-
-
-async def wait_for_tester_status(ops_test: OpsTest, message: str):
+async def wait_for_tester_credentials(ops_test: OpsTest, username: str, password: str):
+    """Wait until the tester reports these credentials, or none if they're empty."""
     assert ops_test.model
     unit = ops_test.model.applications[TESTER].units[0]
-    await ops_test.model.block_until(lambda: unit.workload_status_message == message, timeout=600)
+    expected = {"username": username, "password": password}
+    results = {}
+    for _ in range(60):
+        action = await (await unit.run_action("get-credentials")).wait()
+        results = {key: action.results.get(key, "") for key in expected}
+        if results == expected:
+            return
+        await asyncio.sleep(10)
+    raise AssertionError(f"tester reports {results.get('username')!r}, expected {username!r}")
 
 
 async def integrator_app_data(ops_test: OpsTest) -> dict:
@@ -88,7 +92,7 @@ async def test_requirer_gets_the_credentials_from_a_secret(ops_test: OpsTest):
     await ops_test.model.integrate(f"{APP_NAME}:grafana-cloud-config", TESTER)
     await ops_test.model.wait_for_idle(apps=[APP_NAME, TESTER], status="active", timeout=1000)
 
-    await wait_for_tester_status(ops_test, expected_status("a-username", "a-password"))
+    await wait_for_tester_credentials(ops_test, "a-username", "a-password")
     data = await integrator_app_data(ops_test)
     assert "secret-id" in data
     assert "username" not in data
@@ -98,17 +102,17 @@ async def test_requirer_gets_the_credentials_from_a_secret(ops_test: OpsTest):
 async def test_a_new_password_reaches_the_requirer(ops_test: OpsTest):
     assert ops_test.model
     await ops_test.model.applications[APP_NAME].set_config({"password": "b-password"})
-    await wait_for_tester_status(ops_test, expected_status("a-username", "b-password"))
+    await wait_for_tester_credentials(ops_test, "a-username", "b-password")
 
 
 async def test_clearing_the_password_withdraws_the_credentials(ops_test: OpsTest):
     assert ops_test.model
     await ops_test.model.applications[APP_NAME].set_config({"password": ""})
-    await wait_for_tester_status(ops_test, "no credentials")
+    await wait_for_tester_credentials(ops_test, "", "")
     assert "secret-id" not in await integrator_app_data(ops_test)
 
 
 async def test_setting_the_password_again_shares_a_new_secret(ops_test: OpsTest):
     assert ops_test.model
     await ops_test.model.applications[APP_NAME].set_config({"password": "c-password"})
-    await wait_for_tester_status(ops_test, expected_status("a-username", "c-password"))
+    await wait_for_tester_credentials(ops_test, "a-username", "c-password")

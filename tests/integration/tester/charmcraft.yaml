@@ -3,8 +3,8 @@ name: grafana-cloud-config-tester
 type: charm
 summary: Requires grafana-cloud-config, for the integration tests.
 description: |
-  Reports the credentials it receives over grafana-cloud-config in its status,
-  as the username and a fingerprint of the password.
+  Reports the username it receives over grafana-cloud-config in its status, and
+  returns the credentials from the get-credentials action.
 
 base: ubuntu@24.04
 platforms:
@@ -19,3 +19,7 @@ requires:
   grafana-cloud-config:
     interface: grafana_cloud_config
     limit: 1
+
+actions:
+  get-credentials:
+    description: Return the credentials the charm has received.
